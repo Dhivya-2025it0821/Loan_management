@@ -3,3 +3,5 @@
 !.env.example
 *.log
 .phpunit.result.cache
+
+.vercel
