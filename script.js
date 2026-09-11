@@ -1,4 +1,5 @@
 const STORAGE_KEY = "northstar-lending-demo";
+const API_BASE = "api/index.php";
 
 const seedData = {
   customers: [
@@ -36,6 +37,54 @@ const seedData = {
 const appState = loadState();
 let activeView = "dashboard";
 let toastTimer;
+let backendConnected = false;
+
+async function apiRequest(action, options = {}) {
+  const requestOptions = {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+  };
+  const response = await fetch(`${API_BASE}?action=${encodeURIComponent(action)}`, requestOptions);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.success) throw new Error(payload.message || "The server could not complete that request.");
+  return payload.data;
+}
+
+function updateConnectionStatus() {
+  const status = document.getElementById("connectionStatus");
+  if (!status) return;
+  status.classList.toggle("connection-status--online", backendConnected);
+  status.classList.toggle("connection-status--offline", !backendConnected);
+  status.querySelector("span:last-child").textContent = backendConnected ? "MySQL connected" : "Demo data";
+  status.title = backendConnected ? "Connected to the PHP/MySQL loan management API" : "PHP/MySQL is unavailable, so demo data is being shown";
+}
+
+function syncBackendSelects() {
+  const typeSelect = document.querySelector('#applicationForm select[name="type"]');
+  if (typeSelect && Array.isArray(appState.loanTypes) && appState.loanTypes.length) {
+    typeSelect.innerHTML = appState.loanTypes.map((type) => `<option value="${escapeHtml(type.LoanTypeName)}">${escapeHtml(type.LoanTypeName)}</option>`).join("");
+  }
+
+  const loanSelect = document.querySelector('#paymentForm select[name="loan"]');
+  if (loanSelect && Array.isArray(appState.loans) && appState.loans.length) {
+    loanSelect.innerHTML = appState.loans.map((loan) => `<option value="${escapeHtml(`${loan.id} · ${loan.name}`)}">${escapeHtml(loan.id)} · ${escapeHtml(loan.name)}</option>`).join("");
+  }
+}
+
+async function loadBackendData() {
+  try {
+    const backendData = await apiRequest("bootstrap");
+    Object.assign(appState, backendData);
+    backendConnected = true;
+    updateConnectionStatus();
+    syncBackendSelects();
+    refreshAll();
+  } catch (error) {
+    backendConnected = false;
+    updateConnectionStatus();
+    console.info("Loan API unavailable; continuing with demo data.", error.message);
+  }
+}
 
 function loadState() {
   try {
@@ -98,7 +147,7 @@ function renderApplications(query = "") {
   const tbody = document.getElementById("applicationsTable");
   if (!tbody) return;
   tbody.innerHTML = applications.length ? applications.map((application) => `<tr>
-    <td class="id-cell">${escapeHtml(application.id)}</td><td><div class="person-cell">${avatar(application.name, application.initials, application.tone)}<span>${escapeHtml(application.name)}</span></div></td><td>${escapeHtml(application.type)}</td><td class="amount-cell">${escapeHtml(application.amount)}</td><td>${escapeHtml(application.tenure)}</td><td class="muted-cell">${escapeHtml(application.date)}</td><td>${statusPill(application.status)}</td><td><button class="row-menu" data-application-id="${escapeHtml(application.id)}" aria-label="Application actions" type="button">•••</button></td>
+    <td class="id-cell">${escapeHtml(application.id)}</td><td><div class="person-cell">${avatar(application.name, application.initials, application.tone)}<span>${escapeHtml(application.name)}</span></div></td><td>${escapeHtml(application.type)}</td><td class="amount-cell">${escapeHtml(application.amount)}</td><td>${escapeHtml(application.tenure)}</td><td class="muted-cell">${escapeHtml(application.date)}</td><td>${statusPill(application.status)}</td><td>${application.status === "Pending" ? `<button class="row-action-button" data-application-action="approve" data-application-id="${escapeHtml(application.id)}" type="button">Approve</button><button class="row-action-button row-action-button--reject" data-application-action="reject" data-application-id="${escapeHtml(application.id)}" type="button">Reject</button>` : `<span class="muted-cell">-</span>`}</td>
   </tr>`).join("") : emptyRow(8, "No applications match your search.");
   const pending = appState.applications.filter((application) => application.status === "Pending").length;
   document.getElementById("applicationTotal").textContent = String(appState.applications.length).padStart(2, "0");
@@ -190,7 +239,7 @@ function updateEmiPreview() {
   document.getElementById("emiPreview").textContent = formatCurrency(estimateEmi(form.elements.amount.value, tenure));
 }
 
-function addApplication(event) {
+async function addApplication(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const formData = new FormData(form);
@@ -198,6 +247,26 @@ function addApplication(event) {
   const type = formData.get("type");
   const amount = Number(formData.get("amount"));
   const tenure = formData.get("tenure");
+
+  if (backendConnected) {
+    try {
+      await apiRequest("create_application", {
+        method: "POST",
+        body: JSON.stringify({ applicantName: name, type, amount, tenureMonths: Number(tenure.split(" ")[0]), purpose: formData.get("purpose") })
+      });
+      await loadBackendData();
+      closeModal("applicationModal");
+      form.reset();
+      updateEmiPreview();
+      setView("applications");
+      showToast("Application saved to MySQL and added to the review queue.");
+      return;
+    } catch (error) {
+      showToast(`Could not save application: ${error.message}`);
+      return;
+    }
+  }
+
   const nextNumber = 2084 + appState.applications.length - 8 + 1;
   appState.applications.unshift({ id: `APP-${nextNumber}`, name, initials: initialsFrom(name), type, amount: formatCurrency(amount), numericAmount: amount, tenure, date: "Just now", status: "Pending", purpose: formData.get("purpose"), tone: "teal" });
   saveState();
@@ -209,10 +278,29 @@ function addApplication(event) {
   showToast("Application submitted and added to the review queue.");
 }
 
-function addCustomer(event) {
+async function addCustomer(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
   const name = formData.get("name").trim();
+
+  if (backendConnected) {
+    try {
+      await apiRequest("create_customer", {
+        method: "POST",
+        body: JSON.stringify({ name, phone: formData.get("phone"), email: formData.get("email"), dateOfBirth: formData.get("dob"), city: formData.get("city") })
+      });
+      await loadBackendData();
+      closeModal("customerModal");
+      event.currentTarget.reset();
+      setView("customers");
+      showToast(`${name} was added to MySQL and your customer directory.`);
+      return;
+    } catch (error) {
+      showToast(`Could not save customer: ${error.message}`);
+      return;
+    }
+  }
+
   const nextNumber = 1048 + appState.customers.length - 4 + 1;
   appState.customers.unshift({ id: `CU-${nextNumber}`, name, initials: initialsFrom(name), email: formData.get("email"), phone: formData.get("phone"), city: formData.get("city"), joined: "Just now", loans: 0, borrowed: "₹ 0", status: "Verified", tone: "teal" });
   saveState();
@@ -223,12 +311,31 @@ function addCustomer(event) {
   showToast(`${name} was added to your customer directory.`);
 }
 
-function addPayment(event) {
+async function addPayment(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
   const loanValue = formData.get("loan");
   const [loanId, ...nameParts] = loanValue.split(" · ");
   const name = nameParts.join(" · ");
+
+  if (backendConnected) {
+    try {
+      await apiRequest("create_payment", {
+        method: "POST",
+        body: JSON.stringify({ loanRef: loanId, date: formData.get("date"), amount: Number(formData.get("amount")), mode: formData.get("mode") })
+      });
+      await loadBackendData();
+      closeModal("paymentModal");
+      event.currentTarget.reset();
+      setView("payments");
+      showToast("Payment recorded in MySQL successfully.");
+      return;
+    } catch (error) {
+      showToast(`Could not save payment: ${error.message}`);
+      return;
+    }
+  }
+
   appState.payments.unshift({ id: `PAY-${9922 + appState.payments.length - 5}`, name, initials: initialsFrom(name), loan: loanId, date: new Date(formData.get("date")).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }), amount: formatCurrency(formData.get("amount")), mode: formData.get("mode"), status: "Paid", tone: "teal" });
   saveState();
   refreshAll();
@@ -236,6 +343,32 @@ function addPayment(event) {
   event.currentTarget.reset();
   setView("payments");
   showToast("Payment recorded successfully.");
+}
+
+async function handleApplicationAction(event) {
+  const button = event.target.closest("[data-application-action]");
+  if (!button) return;
+  const applicationId = button.dataset.applicationId.replace("APP-", "");
+  const status = button.dataset.applicationAction === "approve" ? "Approved" : "Rejected";
+
+  if (backendConnected) {
+    try {
+      await apiRequest("update_application", { method: "POST", body: JSON.stringify({ applicationId, status }) });
+      await loadBackendData();
+      showToast(`Application ${status.toLowerCase()} and database records updated.`);
+    } catch (error) {
+      showToast(`Could not update application: ${error.message}`);
+    }
+    return;
+  }
+
+  const application = appState.applications.find((item) => item.id === button.dataset.applicationId);
+  if (application) {
+    application.status = status;
+    saveState();
+    refreshAll();
+    showToast(`Application marked ${status.toLowerCase()} in demo mode.`);
+  }
 }
 
 function downloadCsv(filename, rows) {
@@ -257,6 +390,7 @@ function bindEvents() {
   document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", () => closeModal(button.closest(".modal-backdrop"))));
   document.querySelectorAll(".modal-backdrop").forEach((backdrop) => backdrop.addEventListener("click", (event) => { if (event.target === backdrop) closeModal(backdrop); }));
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") document.querySelectorAll(".modal-backdrop.is-open").forEach(closeModal); });
+  document.addEventListener("click", handleApplicationAction);
   document.getElementById("mobileMenu").addEventListener("click", () => document.getElementById("sidebar").classList.toggle("is-open"));
   document.getElementById("searchToggle").addEventListener("click", () => { const search = document.getElementById("globalSearch"); search.classList.toggle("is-open"); if (search.classList.contains("is-open")) document.getElementById("globalSearchInput").focus(); });
   document.getElementById("globalSearchInput").addEventListener("input", (event) => { const term = event.target.value.toLowerCase(); const panel = document.querySelector(`[data-panel="${activeView}"]`); if (!panel) return; panel.querySelectorAll("tbody tr").forEach((row) => row.classList.toggle("is-filtered", term && !row.textContent.toLowerCase().includes(term))); });
@@ -273,3 +407,5 @@ function bindEvents() {
 
 refreshAll();
 bindEvents();
+updateConnectionStatus();
+loadBackendData();

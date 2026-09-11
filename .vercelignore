@@ -1,0 +1,4 @@
+api/
+database/
+*.php
+README.md

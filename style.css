@@ -106,6 +106,18 @@ button { border: 0; cursor: pointer; }
 .toast { visibility: hidden; opacity: 0; transition: opacity .2s ease, transform .25s ease, visibility .2s ease; }
 .toast.is-visible { visibility: visible; opacity: 1; }
 
+.connection-status { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; color: #9ca8b6; background: #fff; border: 1px solid var(--border); border-radius: 6px; font-size: 9px; white-space: nowrap; }
+.connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 3px var(--orange-pale); }
+.connection-status--online { color: var(--teal-deep); }
+.connection-status--online .connection-dot { background: var(--green); box-shadow: 0 0 0 3px var(--green-pale); }
+.connection-status--offline { color: #a47742; }
+.row-action-button { padding: 5px 8px; color: var(--teal-deep); background: var(--teal-pale); border-radius: 5px; font-size: 9px; font-weight: 700; }
+.row-action-button:hover { background: #d7f2ef; }
+.row-action-button--reject { margin-left: 5px; color: #cc656c; background: var(--red-pale); }
+.row-action-button--reject:hover { background: #ffe3e5; }
+
+@media (max-width: 800px) { .connection-status { display: none; } }
+
 @media (max-width: 500px) {
   body { overflow-x: hidden; }
   .topbar .search-toggle { display: grid; }
